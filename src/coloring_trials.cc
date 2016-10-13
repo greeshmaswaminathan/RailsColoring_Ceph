@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <map>
 #include <list>
+#include <set>
 
 extern "C" {    // another way
  #include <ch-placement.h>
@@ -282,9 +283,10 @@ static int setup_crush(struct options *ig_opts,
     return(0);
 }
 
-static int color(std::map<int, std::string> &server_color_map, std::map<int,std::list<int> > &pg_server_map, std::string colorName ){
+static int color(std::map<int, std::string> &server_color_map, std::map<int,std::list<int> > &pg_server_map,std:: set<int> &conflict_pgs, std::string colorName ){
    std::map<int,std::list<int> >::iterator pg_it;
    std::list<int>::iterator server_it;
+  
    std::map<int, std::string>::iterator server_color_it;
    int coloredCount = 0;
    bool coloring_success = false;
@@ -296,7 +298,7 @@ static int color(std::map<int, std::string> &server_color_map, std::map<int,std:
 	server_color_it = server_color_map.find(*server_it);
 	if(server_color_it != server_color_map.end()){
 	   if(server_color_it->second == colorName){
-		std::cout << "Already colored " << server_color_it->second;
+		//std::cout << "Already colored " << server_color_it->second;
 		coloring_success = true;
 		break;
 	   }
@@ -308,7 +310,8 @@ static int color(std::map<int, std::string> &server_color_map, std::map<int,std:
 	}
       }
       if(!coloring_success){
-	std::cout << "coloring failed for pg " << pg_it->first;
+	//std::cout << "coloring failed for pg " << pg_it->first;
+	conflict_pgs.insert(pg_it->first);
       }
    }
     //std::cout << it->first << " => " << it->second << '\n';
@@ -337,6 +340,8 @@ int main(int argc, char **argv){
    int index;
    std::map<int, std::string> server_color_map;   
    std::map<int,std::list<int> > pg_server_map; 
+   std::set<int> conflict_pgs;
+   std::set<int>::iterator conflict_pgs_it;
    int red_count;
    int green_count;
    int blue_count; 
@@ -362,12 +367,12 @@ int main(int argc, char **argv){
    instance = ch_placement_initialize_crush(map, weight, n_weight);
    assert(instance);
    
-    printf("Generating up to %u objects...\n", ig_opts->max_objs);
+    // printf("Generating up to %u objects...\n", ig_opts->max_objs);
     oid_gen(ig_opts->type, instance, ig_opts->max_objs, ig_opts->max_bytes,
         ig_opts->random_seed, ig_opts->replication, ig_opts->num_servers, ig_opts->params,
         &total_byte_count, &total_obj_count, &total_objs);
 
-    printf("Produced %lu objects with %lu total bytes (not counting replication).\n", total_obj_count, total_byte_count);
+    //printf("Produced %lu objects with %lu total bytes (not counting replication).\n", total_obj_count, total_byte_count);
    
     /* set up array to track per-server object data */
     server_array = malloc(ig_opts->num_servers*sizeof(*server_array));
@@ -392,7 +397,7 @@ int main(int argc, char **argv){
         memset(pg_histo, 0, ig_opts->pgs*sizeof(*pg_histo));
     }
 
-    printf("Calculating server placements\n");
+    //printf("Calculating server placements\n");
     for(i=0; i<ig_opts->pgs/*total_obj_count*/; i++)
     {
 	/*if(ig_opts->pgs > 0)
@@ -411,22 +416,35 @@ int main(int argc, char **argv){
         }*/
 	input_oid = i;
         ch_placement_find_closest(instance, input_oid, max_replication, total_objs[i].server_idxs);
-	std::cout << "input " << input_oid << " " ;
+	//std::cout << "input " << input_oid << " " ;
 	for(index=0; index<max_replication; index++){
 	   pg_server_map[input_oid].push_back(total_objs[i].server_idxs[index]);	
-	   std::cout << total_objs[i].server_idxs[index] << " ";				
+	   //std::cout << total_objs[i].server_idxs[index] << " ";				
 	}    
 	std::cout << "\n";
 
     }
     
     //std::cout << "size of map" << pg_server_map.size();
-    red_count = color(server_color_map,pg_server_map,"red");
-    green_count = color(server_color_map,pg_server_map,"green");
-    blue_count = color(server_color_map,pg_server_map,"blue");
+    red_count = color(server_color_map,pg_server_map,conflict_pgs,"red");
+    green_count = color(server_color_map,pg_server_map,conflict_pgs,"green");
+    blue_count = color(server_color_map,pg_server_map,conflict_pgs,"blue");
     std::cout << "******* results ******* \n";
-    std::cout << red_count << " " << green_count << " " << blue_count << "\n";
+    std::cout << "red servers:"<< red_count << " green servers: " << green_count << " blue servers: " << blue_count << "\n";
     std::cout << "coloring map size : " << server_color_map.size() << "\n" ;
+    std::cout << "Placement groups with conflict: " << conflict_pgs.size() << "\n"; 
+    std::cout << "********* Coloring pattern of each conflicted placement group ********** \n";
+    for(conflict_pgs_it = conflict_pgs.begin(); conflict_pgs_it!=conflict_pgs.end(); ++conflict_pgs_it){
+	int conflict_pg = *conflict_pgs_it;	
+        std::list<int> servers_pg = pg_server_map.find(conflict_pg)->second;
+        std::list<int>::iterator servers_pg_it;
+	std::cout << "For pg: " << conflict_pg << " ";
+	for(servers_pg_it  = servers_pg.begin(); servers_pg_it!=servers_pg.end(); ++servers_pg_it){
+	    std::cout << server_color_map.find(*servers_pg_it)->second << " "; 
+	}
+	std::cout << "\n";
+    }
+    
 }
 
 
