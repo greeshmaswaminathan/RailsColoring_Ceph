@@ -12,10 +12,6 @@
 extern "C" {    // another way
  #include <ch-placement.h>
  #include <ch-placement-crush.h>  
- #include <ch-placement-oid-gen.h>
- #include <codes/jenkins-hash.h>
-	//struct crush_map *crush_create();
-	//struct ch_placement_instance* ch_placement_initialize_crush(struct crush_map *map, __u32 *weight, int n_weight);
 };
 
 struct options
@@ -35,20 +31,6 @@ struct options
     char* params;
 };
 
-struct server_data
-{
-    unsigned int server_index;
-    /* objects that might reside on this server during the course of a simulation */
-    unsigned int potential_obj_count; 
-    struct obj* potential_obj_array;
-};
-
-struct server_idx_infile
-{
-    unsigned int server_index;
-    off_t offset;
-    unsigned int obj_count;
-};
 static int usage (char *exename)
 {
     std::cout << "in usage \n";
@@ -179,7 +161,7 @@ static int setup_crush(struct options *ig_opts,
     int id;
     struct crush_rule* rule;
     struct crush_bucket* svr_buckets[64]; /* which server? one bucket per rack */
-    struct crush_bucket* rack_buckets[8]; /* which rack? one bucket per row */
+    struct crush_bucket* color_buckets[8]; /* which rack? one bucket per row */
     struct crush_bucket* row_bucket;  /* which row? */
     int nrows;
     int bucket_id = -2;
@@ -204,14 +186,7 @@ static int setup_crush(struct options *ig_opts,
 
     *map = crush_create();
     assert(*map);
-    if(strcmp(ig_opts->placement, "crush") == 0)
-    {
-        bucket = crush_make_bucket(*map, CRUSH_BUCKET_STRAW, CRUSH_HASH_DEFAULT, 1,
-                ig_opts->num_servers, items, weights);
-        ret = crush_add_bucket(*map, -2, bucket, &id);
-        assert(ret == 0);
-    }
-    else if(strcmp(ig_opts->placement, "crush-nested") == 0)
+    if(strcmp(ig_opts->placement, "crush-nested") == 0)
     {
         /* big hack; we just generate a few specific configurations */
         assert(ig_opts->num_servers == 1024 || 
@@ -227,13 +202,13 @@ static int setup_crush(struct options *ig_opts,
         nrows = ig_opts->num_servers / 128;
         for(i=0; i<nrows; i++)
         {
-            rack_buckets[i] = crush_make_bucket(*map, crush_bucket_type, CRUSH_HASH_DEFAULT, 2, 0 /*8*/, items, weights);
-            assert(rack_buckets[i]);
+            color_buckets[i] = crush_make_bucket(*map, crush_bucket_type, CRUSH_HASH_DEFAULT, 2, 0 /*8*/, items, weights);
+            assert(color_buckets[i]);
 
-            ret = crush_add_bucket(*map, bucket_id, rack_buckets[i], &id);
+            ret = crush_add_bucket(*map, bucket_id, color_buckets[i], &id);
             assert(ret == 0);
             bucket_id--;
-	    std::cout << " Id after adding rack_bucket " << id << "\n";
+	    std::cout << " Id after adding color_bucket " << id << "\n";
 
             ret = crush_bucket_add_item(*map, row_bucket, id, 0x10000);
             assert(ret == 0);
@@ -253,7 +228,7 @@ static int setup_crush(struct options *ig_opts,
             assert(ret == 0);
             bucket_id--;
 
-            ret = crush_bucket_add_item(*map, rack_buckets[i/8], id, 0x10000);
+            ret = crush_bucket_add_item(*map, color_buckets[i/8], id, 0x10000);
             assert(ret == 0);
         }
 
@@ -287,236 +262,75 @@ static int setup_crush(struct options *ig_opts,
     return(0);
 }
 
-static int color(std::map<int, std::string> &server_color_map, std::map<int,std::list<int> > &pg_server_map,std:: set<int> &conflict_pgs, std::string colorName ){
-   std::map<int,std::list<int> >::iterator pg_it;
-   std::list<int>::iterator server_it;
-  
-   std::map<int, std::string>::iterator server_color_it;
-   int coloredCount = 0;
-   bool coloring_success = false;
-   //int first_server_tocolor = -1;
-   for (pg_it = pg_server_map.begin(); pg_it!=pg_server_map.end(); ++pg_it) {
-      std::list<int> servers = pg_it ->second;
-      coloring_success = false;
-      for(server_it = servers.begin(); server_it!=servers.end(); ++server_it){
-	server_color_it = server_color_map.find(*server_it);
-	if(server_color_it != server_color_map.end()){
-	   if(server_color_it->second == colorName){
-		//std::cout << "Already colored " << server_color_it->second;
-		coloring_success = true;
-		break;
-	   }
-        }else{
-	   server_color_map[*server_it] = colorName;
-	   coloring_success = true;
-	   coloredCount ++;
-	   break;
-	}
-      }
-      if(!coloring_success){
-	//std::cout << "coloring failed for pg " << pg_it->first;
-	conflict_pgs.insert(pg_it->first);
-      }
+std::string get_color(int server_id){
+   int color = (server_id)/128;
+   switch (color){
+	case 0 : return "red";
+	case 1 : return "green";
+	case 2 : return "blue";
+	case 3 : return "orange";
    }
-    //std::cout << it->first << " => " << it->second << '\n';
-   return coloredCount;
 }
 
-static int color_2(std::map<int, std::string> &server_color_map, std::map<int,std::list<int> > &pg_server_map,std:: set<int> &conflict_pgs, std::list<std::string> colors ){
-   std::map<int,std::list<int> >::iterator pg_it;
-   std::list<int>::iterator server_it;
-   int red_count = 0;
-   int green_count = 0;
-   int blue_count = 0;
-
-   std::map<int, std::string>::iterator server_color_it;
-   int coloredCount = 0;
-   bool coloring_success = false;
-   //int first_server_tocolor = -1;
-   for (pg_it = pg_server_map.begin(); pg_it!=pg_server_map.end(); ++pg_it) {
-      std::list<int> servers = pg_it ->second;
-      coloring_success = false;
-      std::string colorName;
-      std::list<std::string>::iterator colors_it;
-      for(colors_it = colors.begin(); colors_it!=colors.end(); ++colors_it){
-	colorName = *colors_it;
- 	for(server_it = servers.begin(); server_it!=servers.end(); ++server_it){
-        server_color_it = server_color_map.find(*server_it);
-        if(server_color_it != server_color_map.end()){
-           if(server_color_it->second == colorName){
-                //std::cout << "Already colored " << server_color_it->second;
-                coloring_success = true;
-                break;
-           }
-        }else{
-           server_color_map[*server_it] = colorName;
-           coloring_success = true;
-	   if(colorName == "red") red_count++;
-	   else if (colorName == "green") green_count++;
-	   else blue_count++;
-           coloredCount ++;
-           break;
-        }
-      }
-      if(!coloring_success){
-        //std::cout << "coloring failed for pg " << pg_it->first;
-        conflict_pgs.insert(pg_it->first);
-      }     
-      }
-
-   }
-    //std::cout << it->first << " => " << it->second << '\n';
-   std::cout << "red :" << red_count << ",  green : "<< green_count << ", blue : "<< blue_count << "\n";
-   return coloredCount;
-}
 
 
 int main(int argc, char **argv){
-   struct options *ig_opts = NULL;
-   int ret;
-   int n_weight;
-   struct crush_map *map;
-    __u32 *weight;
-   struct ch_placement_instance* instance;
-   unsigned long total_byte_count = 0;
-   unsigned long total_obj_count = 0;
-   struct obj* total_objs = NULL;
-   struct server_data* server_array;
+   
    unsigned long i;
-   unsigned int* server_array_cnt;
-   struct server_idx_infile* server_idx_array;
-   uint64_t *pg_histo;
    uint64_t input_oid;
-   uint32_t h1, h2;
-   int max_replication;
    int index;
-   std::map<int, std::string> server_color_map;   
    std::map<int,std::list<int> > pg_server_map; 
-   std::set<int> conflict_pgs;
-   std::set<int>::iterator conflict_pgs_it;
-   int red_count;
-   int green_count;
-   int blue_count; 
 
+   struct options *ig_opts = NULL;
    ig_opts = parse_args(argc, argv);
    if(!ig_opts)
    {
    	usage(argv[0]);
         return(-1);
    }
-   max_replication = ig_opts->replication;
+   
+   int max_replication = ig_opts->replication;
    if(max_replication > ig_opts->num_servers)
       max_replication = ig_opts->num_servers;
 
-   ret = setup_crush(ig_opts, &map, &weight, &n_weight);
+   int n_weight;
+   struct crush_map *map;
+   __u32 *weight;
+   int ret = setup_crush(ig_opts, &map, &weight, &n_weight);
    if(ret < 0)
    {
-   	fprintf(stderr, "Error: failed to set up CRUSH.\n");
 	std::cout << "Failed to setup crush. \n";
         return(-1);
    }
-   std::cout << "ret value :" << ret << "\n";
-   instance = ch_placement_initialize_crush(map, weight, n_weight);
+   //std::cout << "ret value :" << ret << "\n";
+   struct ch_placement_instance* instance = ch_placement_initialize_crush(map, weight, n_weight);
    assert(instance);
    
-    // printf("Generating up to %u objects...\n", ig_opts->max_objs);
-    oid_gen(ig_opts->type, instance, ig_opts->max_objs, ig_opts->max_bytes,
-        ig_opts->random_seed, ig_opts->replication, ig_opts->num_servers, ig_opts->params,
-        &total_byte_count, &total_obj_count, &total_objs);
-
-    //printf("Produced %lu objects with %lu total bytes (not counting replication).\n", total_obj_count, total_byte_count);
    
-    /* set up array to track per-server object data */
-    server_array = malloc(ig_opts->num_servers*sizeof(*server_array));
-    assert(server_array);
-    memset(server_array, 0, ig_opts->num_servers*sizeof(*server_array));
-    server_array_cnt = malloc(ig_opts->num_servers*sizeof(*server_array_cnt));
-    assert(server_array_cnt);
-    memset(server_array_cnt, 0, ig_opts->num_servers*sizeof(*server_array_cnt));
-    server_idx_array = malloc(ig_opts->num_servers*sizeof(*server_idx_array));
-    assert(server_idx_array);
-    memset(server_idx_array, 0, ig_opts->num_servers*sizeof(*server_idx_array));
-
-    for(i=0; i<ig_opts->num_servers; i++)
-    {
-        server_array[i].server_index = i;
-    }
-
-    if(ig_opts->pgs)
-    {
-        pg_histo = malloc(ig_opts->pgs*sizeof(*pg_histo));
-        assert(pg_histo);
-        memset(pg_histo, 0, ig_opts->pgs*sizeof(*pg_histo));
-    }
-
     //printf("Calculating server placements\n");
-    for(i=0; i<4/*ig_opts->pgs*//*total_obj_count*/; i++)
+    for(i=0; i<ig_opts->pgs/*total_obj_count*/; i++)
     {
-	/*if(ig_opts->pgs > 0)
-        {
-            h1 = 0;
-            h2 = 0;
-            bj_hashlittle2(&total_objs[i].oid, sizeof(total_objs[i].oid),
-                &h1, &h2);
-            input_oid = h1 + (((uint64_t)h2)<<32);
-            input_oid = input_oid % ig_opts->pgs;
-            pg_histo[input_oid]++;
-        }
-        else
-        {
-            input_oid = total_objs[i].oid;
-        }*/
+
 	input_oid = i;
-        ch_placement_find_closest(instance, input_oid, max_replication, total_objs[i].server_idxs);
+        long unsigned int mapped_servers[max_replication];
+        ch_placement_find_closest(instance, input_oid, max_replication, mapped_servers);
 	//std::cout << "input " << input_oid << " " ;
+        std::set<std::string> pg_colors;
 	for(index=0; index<max_replication; index++){
-	   pg_server_map[input_oid].push_back(total_objs[i].server_idxs[index]);	
-	   std::cout << total_objs[i].server_idxs[index] << " ";				
+	   pg_server_map[input_oid].push_back(mapped_servers[index]);	
+	   std::cout << mapped_servers[index] <<":" <<get_color(mapped_servers[index])<<"  ";				
+	   pg_colors.insert(get_color(mapped_servers[index]));
 	}    
+	if(pg_colors.size() != 4) {
+	   std::cout << "Conflict!!!!";
+	   break;
+	}
 	std::cout << "\n";
 
     }
     
-    //std::cout << "size of map" << pg_server_map.size();
-    /*red_count = color(server_color_map,pg_server_map,conflict_pgs,"red");
-    green_count = color(server_color_map,pg_server_map,conflict_pgs,"green");
-    blue_count = color(server_color_map,pg_server_map,conflict_pgs,"blue");
-    std::cout << "******* results ******* \n";
-    std::cout << "red servers:"<< red_count << " green servers: " << green_count << " blue servers: " << blue_count << "\n";
-    std::cout << "coloring map size : " << server_color_map.size() << "\n" ;
-    std::cout << "Placement groups with conflict: " << conflict_pgs.size() << "\n"; 
-    std::cout << "********* Coloring pattern of each conflicted placement group ********** \n";
-    for(conflict_pgs_it = conflict_pgs.begin(); conflict_pgs_it!=conflict_pgs.end(); ++conflict_pgs_it){
-	int conflict_pg = *conflict_pgs_it;	
-        std::list<int> servers_pg = pg_server_map.find(conflict_pg)->second;
-        std::list<int>::iterator servers_pg_it;
-	std::cout << "For pg: " << conflict_pg << " ";
-	for(servers_pg_it  = servers_pg.begin(); servers_pg_it!=servers_pg.end(); ++servers_pg_it){
-	    std::cout << server_color_map.find(*servers_pg_it)->second << " "; 
-	}
-	std::cout << "\n";
-    }*/
-   
-   // approach 2
-   /*std::cout << "approach 2 \n";
-   std::list<std::string> colors;
-   colors.push_back("red");
-   colors.push_back("green");
-   colors.push_back("blue");
-   int total_colored_servers  = color_2(server_color_map,pg_server_map,conflict_pgs,colors);
-   std::cout << "total colored servers: " << total_colored_servers << "\n";
-   for(conflict_pgs_it = conflict_pgs.begin(); conflict_pgs_it!=conflict_pgs.end(); ++conflict_pgs_it){
-        int conflict_pg = *conflict_pgs_it;
-        std::list<int> servers_pg = pg_server_map.find(conflict_pg)->second;
-        std::list<int>::iterator servers_pg_it;
-        std::cout << "For pg: " << conflict_pg << " ";
-        for(servers_pg_it  = servers_pg.begin(); servers_pg_it!=servers_pg.end(); ++servers_pg_it){
-            std::cout << server_color_map.find(*servers_pg_it)->second << " ";
-        }
-        std::cout << "\n";
-    }*/
-
-   
+    
 }
+
 
 
