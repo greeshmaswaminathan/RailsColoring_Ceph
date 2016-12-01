@@ -208,7 +208,7 @@ static int setup_crush(struct options *ig_opts,
             ret = crush_add_bucket(*map, bucket_id, color_buckets[i], &id);
             assert(ret == 0);
             bucket_id--;
-	    std::cout << " Id after adding color_bucket " << id << "\n";
+	    //std::cout << " Id after adding color_bucket " << id << "\n";
 
             ret = crush_bucket_add_item(*map, row_bucket, id, 0x10000);
             assert(ret == 0);
@@ -216,15 +216,19 @@ static int setup_crush(struct options *ig_opts,
 
         for(i=0; i<(ig_opts->num_servers/16); i++)
         {
-            for(j=0; j<16; j++)
-                items[j] = i*16+j;
+	    int colors[16];
+            for(j=0; j<16; j++){
+		items[j] = i*16+j;
+		colors[j] = j % 4;
+	    }
 
             svr_buckets[i] = crush_make_bucket(*map, crush_bucket_type,
                 CRUSH_HASH_DEFAULT, 3, 16, items, weights);
             assert(svr_buckets[i]);
 
             ret = crush_add_bucket(*map, bucket_id, svr_buckets[i], &id);
-            std::cout << " Id after adding svr_bucket " << id << "\n";
+            crush_bucket_map_colors(svr_buckets[i], items, colors);
+	    std::cout << " Id after adding svr_bucket " << id << "\n";
             assert(ret == 0);
             bucket_id--;
 
@@ -247,14 +251,22 @@ static int setup_crush(struct options *ig_opts,
 #endif
     
     crush_finalize(*map);
-
-    rule = crush_make_rule(4, 0, 1, 1, 10);
+    
+    /*rule = crush_make_rule(5, 0, 1, 1, 10);
     assert(rule);
 
     crush_rule_set_step(rule, 0, CRUSH_RULE_TAKE, id, 0);
-    crush_rule_set_step(rule, 1, CRUSH_RULE_CHOOSE_FIRSTN, 4, 2);
-    crush_rule_set_step(rule, 2, CRUSH_RULE_CHOOSELEAF_FIRSTN, 1, 0);
-    crush_rule_set_step(rule, 3, CRUSH_RULE_EMIT, 0, 0);
+    crush_rule_set_step(rule, 1, CRUSH_RULE_CHOOSE_FIRSTN, 1, 2);
+    crush_rule_set_step(rule, 2, CRUSH_RULE_CHOOSE_FIRSTN, 2, 3);
+    crush_rule_set_step(rule, 3, CRUSH_RULE_CHOOSELEAF_FIRSTN, 2, 0);
+    crush_rule_set_step(rule, 4, CRUSH_RULE_EMIT, 0, 0);*/
+
+    rule = crush_make_rule(3, 0, 1, 1, 10);
+    assert(rule);
+
+    crush_rule_set_step(rule, 0, CRUSH_RULE_TAKE, id, 0);
+    crush_rule_set_step(rule, 1, CRUSH_RULE_CHOOSELEAF_FIRSTN, 4, 0);
+    crush_rule_set_step(rule, 2, CRUSH_RULE_EMIT, 0, 0);
 
     ret = crush_add_rule(*map, rule, 0);
     assert(ret == 0);
@@ -263,7 +275,8 @@ static int setup_crush(struct options *ig_opts,
 }
 
 std::string get_color(int server_id){
-   int color = (server_id)/128;
+   // int color = (server_id)/128;
+   int color = (server_id) % 4;
    switch (color){
 	case 0 : return "red";
 	case 1 : return "green";
@@ -308,7 +321,7 @@ int main(int argc, char **argv){
    
    
     //printf("Calculating server placements\n");
-    for(i=0; i<ig_opts->pgs/*total_obj_count*/; i++)
+    for(i=0; i<ig_opts-> pgs/*total_obj_count*/; i++)
     {
 
 	input_oid = i;
